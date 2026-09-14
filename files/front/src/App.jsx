@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
-const BACKEND_URL = 'http://127.0.0.1:8000';
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
 
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -15,7 +15,7 @@ function App() {
     const saved = localStorage.getItem('uploadResponse');
     return saved ? JSON.parse(saved) : null;
   });
-  
+    
   const [scoreImages, setScoreImages] = useState(() => {
     const saved = localStorage.getItem('scoreImages');
     return saved ? JSON.parse(saved) : [];
@@ -164,7 +164,7 @@ function App() {
     try {
       const response = await axios.post(`${BACKEND_URL}/api/score/upload`, formData, {
         headers: {
-          'Content-Type': 'multipart/form-data',
+          'ngrok-skip-browser-warning': 'true',
         },
       });
 
@@ -280,7 +280,9 @@ function App() {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
       // 2. 백엔드 웹소켓 연결
-      const ws = new WebSocket('ws://127.0.0.1:8000/ws/audio-sync');
+      const wsProtocol = BACKEND_URL.startsWith('https') ? 'wss' : 'ws';
+      const wsHost = BACKEND_URL.replace(/^https?:\/\//, '');
+      const ws = new WebSocket(`${wsProtocol}://${wsHost}/ws/audio-sync`);
       socketRef.current = ws;
 
       ws.onopen = () => {
