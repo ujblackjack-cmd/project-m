@@ -1,0 +1,22 @@
+[
+  {
+    "measure": 1,
+    "start_beat": 0,
+    "start_sec": 0.0
+  },
+  {
+    "measure": 2,
+    "start_beat": 4,
+    "start_sec": 2.5
+  },
+  {
+    "measure": 3,
+    "start_beat": 8,
+    "start_sec": 5.0
+  },
+  {
+    "measure": 4,
+    "start_beat": 12,
+    "start_sec": 7.5
+  }
+]
