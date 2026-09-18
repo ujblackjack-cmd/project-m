@@ -39,6 +39,12 @@ function App() {
   const socketRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
+  const audioContextRef = useRef(null);
+  const processorRef = useRef(null);
+  const sourceRef = useRef(null);
+  const [currentMeasure, setCurrentMeasure] = useState(1); // 현재 감지된 마디 번호 상태
+
+  
 
   // Web Audio API를 이용해 짧고 명확한 메트로놈 틱 소리 재생
   const playClick = () => {
@@ -139,7 +145,9 @@ function App() {
   const [isDrawingMode, setIsDrawingMode] = useState(false); 
   const [penColor, setPenColor] = useState('#ff4444'); 
   const [penWidth, setPenWidth] = useState(3); 
-  const [isHighlighter, setIsHighlighter] = useState(false); 
+  const [isHighlighter, setIsHighlighter] = useState(false);
+  const [tool, setTool] = useState('pen');
+  const [highlighterOpacity, setHighlighterOpacity] = useState(0.3);
   
   const canvasRefs = useRef({}); 
 
@@ -237,19 +245,30 @@ function App() {
         const scaleY = canvas.height / rect.height;
 
         ctx.lineTo((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
-        ctx.strokeStyle = penColor;
-        ctx.lineWidth = penWidth;
-        ctx.lineCap = 'round';
-        ctx.lineJoin = 'round';
-        
-        if (isHighlighter) {
-          ctx.globalAlpha = 0.35; 
-        } else {
-          ctx.globalAlpha = 1.0; 
-        }
+        if (tool === 'eraser') {
+                  // 🧹 지우개: 적당히 지워지도록 크기 설정
+                  ctx.globalCompositeOperation = 'destination-out';
+                  ctx.lineWidth = 15; 
+                  ctx.globalAlpha = 1.0;
+            } else if (tool === 'highlighter') {
+                      // 🖍️ 형광펜: 'multiply' 모드를 사용하여 밑에 있는 검은 음표가 비치도록 설정!
+                      ctx.globalCompositeOperation = 'multiply';
+                      ctx.strokeStyle = penColor;
+                      ctx.lineWidth = 3; 
+                      ctx.globalAlpha = highlighterOpacity; 
+            } else {
+                  // 🖊️ 펜 (얇고 사각거리는 노트 필기 감성 - 음표를 가리지 않는 극세사 펜!)
+                  ctx.globalCompositeOperation = 'source-over';
+                  ctx.strokeStyle = penColor;
+                  ctx.lineWidth = 0.1; 
+                  ctx.globalAlpha = 1.0; 
+                } 
 
-        ctx.stroke();
-      };
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                
+                ctx.stroke();
+              };
 
       const stopDrawing = () => {
         if (!isDrawing) return;
@@ -262,7 +281,7 @@ function App() {
       canvas.onmouseup = stopDrawing;
       canvas.onmouseleave = stopDrawing;
     });
-  }, [songModeActive, scoreImages, isDrawingMode, penColor, penWidth, isHighlighter]);
+  }, [songModeActive, scoreImages, isDrawingMode, penColor, penWidth, isHighlighter,tool]);
 
   const clearCanvas = () => {
     scoreImages.forEach((_, index) => {
@@ -274,72 +293,125 @@ function App() {
     });
   };
 
-  const startLiveSync = async () => {
-    try {
-      // 1. 마이크 스트림 권한 획득
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+const startLiveSync = async () => {
+  try {
+    // 1. 마이크 스트림 권한 획득
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    
+    // 2. 동적 웹소켓 URL 생성
+    const wsProtocol = BACKEND_URL.startsWith('https') ? 'wss' : 'ws';
+    const wsHost = BACKEND_URL.replace(/^https?:\/\//, '');
+    const ws = new WebSocket(`${wsProtocol}://${wsHost}/ws/audio-sync`);
+    socketRef.current = ws;
+
+    ws.onopen = () => {
+      console.log('백엔드 오디오 웹소켓 연결 완료');
       
-      // 2. 백엔드 웹소켓 연결
-      const wsProtocol = BACKEND_URL.startsWith('https') ? 'wss' : 'ws';
-      const wsHost = BACKEND_URL.replace(/^https?:\/\//, '');
-      const ws = new WebSocket(`${wsProtocol}://${wsHost}/ws/audio-sync`);
-      socketRef.current = ws;
+      // [필수 프로토콜] 연결 직후 기준 악보 파일명 전송
+      const filename = uploadResponse?.filename || '';
+      ws.send(JSON.stringify({ filename: filename }));
+      console.log(`[Handshake] 기준 악보 전송: ${filename}`);
 
-      ws.onopen = () => {
-        console.log('백엔드 오디오 웹소켓 연결 완료');
-        setIsListening(true);
-        alert('실시간 연주 감지가 시작되었습니다! 연주를 시작하세요.');
-      };
+      setIsListening(true);
+      alert('실시간 연주 감지가 시작되었습니다! 연주를 시작하세요.');
+    };
 
-      ws.onmessage = (event) => {
-        const data = JSON.parse(event.data);
-        if (data.status === 'trigger') {
-          console.log('🎵 연주 감지됨! 다음으로 스크롤', data.rms);
-          // 다음 페이지로 자동 넘기기 (마지막 페이지가 아닐 경우)
-          setCurrentPageIndex((prev) => {
-            const nextIdx = Math.min(scoreImages.length - 1, prev + 1);
-            scrollToPage(nextIdx);
-            return nextIdx;
-          });
-        }
-      };
+    ws.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      console.log('서버 응답:', data);
 
-      ws.onclose = () => {
-        console.log('웹소켓 연결 종료됨');
-        setIsListening(false);
-      };
+      if (data.measure) {
+        setCurrentMeasure(data.measure);
+      }
 
-      // 3. MediaRecorder로 주기적인 오디오 청크 생성 및 전송
-      const mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
-      mediaRecorderRef.current = mediaRecorder;
+      // 마디가 전환되었거나(trigger) 감지되었을 때 페이지 스크롤 등의 액션 수행
+      if (data.status === 'trigger') {
+        console.log(`🎵 [연주 감지] 마디 전환: ${data.measure}마디 (모드: ${data.mode}, 신뢰도: ${data.confidence})`);
+        
+        // 예시: 마디 번호나 진행 상황에 맞춰 페이지 자동 넘김 로직 연결 가능
+        // 필요에 따라 특정 마디가 속한 페이지로 이동하는 로직을 구현할 수 있습니다.
+      }
+    };
 
-      mediaRecorder.ondataavailable = async (e) => {
-        if (e.data.size > 0 && ws.readyState === WebSocket.OPEN) {
-          const arrayBuffer = await e.data.arrayBuffer();
-          ws.send(arrayBuffer); // 백엔드로 바이너리 전송
-        }
-      };
+    ws.onclose = () => {
+      console.log('웹소켓 연결 종료됨');
+      stopLiveSync();
+    };
 
-      // 200ms 단위로 오디오 청크를 쪼개서 서버로 전송
-      mediaRecorder.start(200);
+    // 3. Web Audio API를 이용한 Raw Float32 PCM 캡처 및 실시간 스트리밍
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    const audioCtx = new AudioContextClass({ sampleRate: 22050 }); // 백엔드 SR(22050)과 맞춤
+    audioContextRef.current = audioCtx;
 
-    } catch (err) {
-      console.error('마이크 연결 실패:', err);
-      alert('마이크 접근 권한을 확인해주세요.');
-    }
-  };
+    const source = audioCtx.createMediaStreamSource(stream);
+    sourceRef.current = source;
 
-  const stopLiveSync = () => {
-    if (mediaRecorderRef.current) {
-      mediaRecorderRef.current.stop();
-    }
-    if (socketRef.current) {
-      socketRef.current.close();
-    }
+    // 버퍼 사이즈 4096 크기로 오디오 스트림 쪼개기
+    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+    processorRef.current = processor;
+
+    processor.onaudioprocess = (e) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        const inputData = e.inputBuffer.getChannelData(0); // Float32Array
+        // Float32Array의 raw binary buffer를 그대로 전송
+        ws.send(inputData.buffer);
+      }
+    };
+
+    source.connect(processor);
+    processor.connect(audioCtx.destination); // (소리가 스피커로 출력되지 않게 하려면 가인 노드 조절 가능하나 보통 마이크 입력은 페드백 주의)
+
+  } catch (err) {
+    console.error('마이크 연결 실패:', err);
+    alert('마이크 접근 권한을 확인해주세요.');
     setIsListening(false);
-    alert('실시간 연주 감지가 중지되었습니다.');
-  };
+  }
+};
 
+const stopLiveSync = () => {
+  // Web Audio 자원 해제
+  if (processorRef.current && audioContextRef.current) {
+    processorRef.current.disconnect();
+    sourceRef.current?.disconnect();
+    audioContextRef.current.close();
+    processorRef.current = null;
+    audioContextRef.current = null;
+    sourceRef.current = null;
+  }
+
+  // 웹소켓 종료
+  if (socketRef.current) {
+    socketRef.current.close();
+    socketRef.current = null;
+  }
+
+  setIsListening(false);
+  console.log('실시간 연주 감지가 중지되었습니다.');
+};
+
+// 🎵 실시간 연주 마디(currentMeasure) 변경에 따른 자동 페이지 넘김/스크롤 로직
+  useEffect(() => {
+    if (!isListening || !currentMeasure) return;
+
+    // 예시: 한 페이지당 대략 8마디씩 구성되어 있다고 가정할 때의 페이지 자동 계산 로직
+    // (만약 백엔드에서 페이지 정보까지 준다면 response.page 값을 그대로 쓰셔도 됩니다!)
+    const MEASURES_PER_PAGE = 8; 
+    const calculatedPage = Math.floor((currentMeasure - 1) / MEASURES_PER_PAGE) + 1;
+
+    // 현재 보고 있는 페이지와 다를 경우에만 페이지 자동 변경
+    if (calculatedPage !== currentPage && calculatedPage > 0 && calculatedPage <= totalPages) {
+      setCurrentPage(calculatedPage);
+      console.log(`🎤 연주 싱크: ${currentMeasure}마디 감지 -> ${calculatedPage}페이지로 자동 이동`);
+    }
+  }, [currentMeasure, isListening]);
+
+  const scrollToMeasure = (measureNumber) => {
+    const element = document.getElementById(`measure-${measureNumber}`);
+    if (element) {
+      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+  };
+  
   return (
     <div style={{ padding: '0px', fontFamily: 'Arial, sans-serif', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#121212', color: 'white' }}>
       
@@ -442,13 +514,13 @@ function App() {
             <div style={{ flex: 1, height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden', position: 'relative' }}>
                 
                 {/* 상단 컨트롤 바 */}
-                <div style={{ backgroundColor: '#1a1a1a', padding: '8px 20px', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', flexWrap: 'wrap', gap: '10px' }}>
+                <div style={{ backgroundColor: '#1a1a1a', padding: '10px 20px', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '13px', flexWrap: 'wrap', gap: '12px' }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
                     <span style={{ color: '#8BC34A', fontWeight: 'bold' }}>📂 {uploadResponse?.filename}</span>
                   </div>
 
-                  {/* 중앙/우측 컨트롤 그룹 (메트로놈 + 필기 툴바) */}
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '15px', flexWrap: 'wrap' }}>
+                  {/* 중앙/우측 컨트롤 그룹 (메트로놈 + 필기 툴바 + 실시간 감지) */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     
                     {/* 🎵 메트로놈 위젯 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#252525', padding: '4px 10px', borderRadius: '6px', border: '1px solid #444' }}>
@@ -480,68 +552,133 @@ function App() {
                       </button>
                     </div>
 
-                    {/* 필기 및 형광펜 툴바 */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#252525', padding: '4px 10px', borderRadius: '6px', border: '1px solid #444' }}>
+                    {/* ✏️ 펜 / 형광펜 / 지우개 선택 툴바 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#252525', padding: '4px 8px', borderRadius: '6px', border: '1px solid #444' }}>
+                      <button 
+                        onClick={() => { setTool('pen'); setIsDrawingMode(true); }}
+                        style={{ 
+                          backgroundColor: tool === 'pen' && isDrawingMode ? '#2196F3' : '#333', 
+                          color: 'white',
+                          padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' 
+                        }}
+                      >
+                        ✏️ 펜
+                      </button>
+                      <button 
+                        onClick={() => { setTool('highlighter'); setIsDrawingMode(true); }}
+                        style={{ 
+                          backgroundColor: tool === 'highlighter' && isDrawingMode ? '#2196F3' : '#333', 
+                          color: 'white',
+                          padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' 
+                        }}
+                      >
+                        🖍️ 형광펜
+                      </button>
+                      <button 
+                        onClick={() => { setTool('eraser'); setIsDrawingMode(true); }}
+                        style={{ 
+                          backgroundColor: tool === 'eraser' && isDrawingMode ? '#ff5252' : '#333', 
+                          color: 'white',
+                          padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' 
+                        }}
+                      >
+                        🧹 지우개
+                      </button>
+                      
+                    {tool === 'highlighter' && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: '4px', paddingLeft: '6px', borderLeft: '1px solid #444', fontSize: '11px', color: '#aaa' }}>
+                          <span>투명도: {Math.round(highlighterOpacity * 100)}%</span>
+                          <input 
+                            type="range" 
+                            min="0.1" 
+                            max="0.8" 
+                            step="0.05" 
+                            value={highlighterOpacity} 
+                            onChange={(e) => setHighlighterOpacity(parseFloat(e.target.value))}
+                            style={{ width: '55px', cursor: 'pointer' }}
+                          />
+                        </div>
+                      )}
+
+                      {/* 🎨 [추가] 펜 및 형광펜 색상 선택 팔레트 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#252525', padding: '4px 8px', borderRadius: '6px', border: '1px solid #444' }}>
+                      <span style={{ fontSize: '11px', color: '#aaa' }}>색상:</span>
+                      {[
+                        { name: '빨강', hex: '#f50c0c' },
+                        { name: '노랑', hex: '#FFEB3B' },
+                        { name: '연두', hex: '#8BC34A' },
+                        { name: '하늘', hex: '#03A9F4' },
+                        { name: '민트', hex: '#8eebcf' },
+                        { name: '주황', hex: '#FF9800' },
+                        ,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
+                      ].map((c) => (
+                        <button
+                          key={c.hex}
+                          onClick={() => setPenColor(c.hex)}
+                          title={c.name}
+                          style={{
+                            width: '18px',
+                            height: '18px',
+                            backgroundColor: c.hex,
+                            border: penColor === c.hex ? '2px solid #ffffff' : '1px solid #555',
+                            borderRadius: '50%',
+                            cursor: 'pointer',
+                            padding: '0',
+                            boxShadow: penColor === c.hex ? '0 0 4px rgba(255,255,255,0.8)' : 'none',
+                            transform: penColor === c.hex ? 'scale(1.15)' : 'scale(1)',
+                            transition: 'all 0.15s ease'
+                          }}
+                        />
+                      ))}
+                    </div>
+
+                      {/* 필기 모드 켜기/끄기 상태 토글 버튼 */}
                       <button 
                         onClick={() => setIsDrawingMode(!isDrawingMode)}
-                        style={{ padding: '4px 10px', backgroundColor: isDrawingMode ? '#FF9800' : '#444', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontWeight: 'bold', fontSize: '12px' }}
+                        style={{ 
+                          marginLeft: '4px',
+                          backgroundColor: isDrawingMode ? '#4CAF50' : '#555', 
+                          color: 'white',
+                          padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' 
+                        }}
                       >
-                        {isDrawingMode ? '✏️ 필기 모드 ON' : '✏️ 필기 모드 OFF'}
+                        {isDrawingMode ? '✍️ ON' : '🔒 OFF'}
+                      </button>
+                    </div>
+
+                    {/* 🎤 실시간 연주 감지 버튼 및 상태 표시 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <button 
+                        onClick={isListening ? stopLiveSync : startLiveSync}
+                        style={{ 
+                          padding: '6px 12px', 
+                          backgroundColor: isListening ? '#d32f2f' : '#2196F3', 
+                          color: 'white', 
+                          border: 'none', 
+                          borderRadius: '4px', 
+                          cursor: 'pointer', 
+                          fontWeight: 'bold', 
+                          fontSize: '12px'
+                        }}
+                      >
+                        {isListening ? '⏹ 감지 중지' : '🎤 실시간 연주 감지'}
                       </button>
 
-                      {isDrawingMode && (
-                        <>
-                          <button 
-                            onClick={() => { setIsHighlighter(false); setPenWidth(3); }}
-                            style={{ padding: '3px 8px', backgroundColor: !isHighlighter ? '#555' : '#333', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px' }}
-                          >
-                            일반 펜
-                          </button>
-                          <button 
-                            onClick={() => { setIsHighlighter(true); setPenWidth(18); }}
-                            style={{ padding: '3px 8px', backgroundColor: isHighlighter ? '#FFEB3B' : '#333', color: isHighlighter ? '#000' : '#fff', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
-                          >
-                            🖍️ 형광펜
-                          </button>
-
-                          <div style={{ display: 'flex', gap: '4px', marginLeft: '5px' }}>
-                            {['#ff4444', '#2196F3', '#4CAF50', '#FFEB3B', '#000000'].map((color) => (
-                              <div 
-                                key={color}
-                                onClick={() => setPenColor(color)}
-                                style={{ width: '16px', height: '16px', backgroundColor: color, borderRadius: '50%', cursor: 'pointer', border: penColor === color ? '2px solid white' : '1px solid #777' }}
-                              />
-                            ))}
-                          </div>
-
-                          <button 
-                            onClick={clearCanvas}
-                            style={{ marginLeft: '8px', padding: '3px 6px', backgroundColor: '#d32f2f', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px' }}
-                          >
-                            지우기
-                          </button>
-                        </>
+                      {isListening && (
+                        <div style={{ 
+                          backgroundColor: '#333', 
+                          padding: '5px 10px', 
+                          borderRadius: '4px', 
+                          color: '#8BC34A', 
+                          fontSize: '12px', 
+                          fontWeight: 'bold',
+                          display: 'flex',
+                          alignItems: 'center'
+                        }}>
+                          🎯 {currentMeasure}마디
+                        </div>
                       )}
                     </div>
-                    {/* 🎤 실시간 연주 감지 버튼 */}
-                    <button 
-                      onClick={isListening ? stopLiveSync : startLiveSync}
-                      style={{ 
-                        padding: '4px 10px', 
-                        backgroundColor: isListening ? '#d32f2f' : '#2196F3', 
-                        color: 'white', 
-                        border: 'none', 
-                        borderRadius: '4px', 
-                        cursor: 'pointer', 
-                        fontWeight: 'bold', 
-                        fontSize: '12px',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '4px'
-                      }}
-                    >
-                      {isListening ? '⏹ 연주 감지 중지' : '🎤 실시간 연주 감지 시작'}
-                    </button>
                   </div>
                 </div>
 
@@ -629,6 +766,7 @@ function App() {
                                                     left: 0,
                                                     width: '100%',
                                                     height: '100%',
+                                                    mixBlendMode: 'multiply',
                                                     pointerEvents: isDrawingMode ? 'auto' : 'none',
                                                 }}
                                             />
