@@ -1,7 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 
-const BACKEND_URL = import.meta.env.VITE_BACKEND_URL;
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://project-m-backend-ar2l.onrender.com';
 
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
@@ -390,20 +390,16 @@ const stopLiveSync = () => {
 };
 
 // 🎵 실시간 연주 마디(currentMeasure) 변경에 따른 자동 페이지 넘김/스크롤 로직
-  useEffect(() => {
-    if (!isListening || !currentMeasure) return;
+useEffect(() => {
+  if (!isListening || !currentMeasure) return;
+  const MEASURES_PER_PAGE = 8; // 한 페이지당 마디 수
+  const pageIndex = Math.floor((currentMeasure - 1) / MEASURES_PER_PAGE);
 
-    // 예시: 한 페이지당 대략 8마디씩 구성되어 있다고 가정할 때의 페이지 자동 계산 로직
-    // (만약 백엔드에서 페이지 정보까지 준다면 response.page 값을 그대로 쓰셔도 됩니다!)
-    const MEASURES_PER_PAGE = 8; 
-    const calculatedPage = Math.floor((currentMeasure - 1) / MEASURES_PER_PAGE) + 1;
-
-    // 현재 보고 있는 페이지와 다를 경우에만 페이지 자동 변경
-    if (calculatedPage !== currentPage && calculatedPage > 0 && calculatedPage <= totalPages) {
-      setCurrentPage(calculatedPage);
-      console.log(`🎤 연주 싱크: ${currentMeasure}마디 감지 -> ${calculatedPage}페이지로 자동 이동`);
-    }
-  }, [currentMeasure, isListening]);
+  if (pageIndex >= 0 && pageIndex < scoreImages.length) {
+    scrollToPage(pageIndex);
+    console.log(`🎤 연주 싱크: ${currentMeasure}마디 감지 -> ${pageIndex + 1}페이지로 이동`);
+  }
+}, [currentMeasure, isListening, scoreImages.length]);
 
   const scrollToMeasure = (measureNumber) => {
     const element = document.getElementById(`measure-${measureNumber}`);
