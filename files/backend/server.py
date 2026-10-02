@@ -13,6 +13,9 @@ import numpy as np
 import json
 import librosa
 import score_tracking
+from datetime import datetime
+from pydantic import BaseModel
+from typing import Optional
 
 app = FastAPI(title="AI Music Lesson Assistant API", version="1.0")
 
@@ -204,6 +207,70 @@ async def audio_sync_websocket(websocket: WebSocket):
 
     except WebSocketDisconnect:
         print("🔌 오디오 스트림 웹소켓 연결 종료")
+
+    # 데이터 저장 경로
+FEEDBACK_FILE = "feedbacks.json"
+
+class FeedbackCreate(BaseModel):
+    filename: str
+    measure: Optional[int] = None
+    text: str
+
+def load_feedbacks():
+    if not os.path.exists(FEEDBACK_FILE):
+        return {}
+    with open(FEEDBACK_FILE, "r", encoding="utf-8") as f:
+        try:
+            return json.load(f)
+        except json.JSONDecodeError:
+            return {}
+
+def save_feedbacks(data):
+    with open(FEEDBACK_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+# --- API 엔드포인트 ---
+
+# 1. 특정 악보의 레슨 피드백 목록 조회
+@app.get("/api/feedback/{filename:path}")
+def get_feedbacks(filename: str):
+    data = load_feedbacks()
+    return {"feedbacks": data.get(filename, [])}
+
+# 2. 새 레슨 피드백 등록
+@app.post("/api/feedback")
+def create_feedback(item: FeedbackCreate):
+    if not item.text.strip():
+        raise HTTPException(status_code=400, detail="피드백 내용을 입력해주세요.")
+    
+    data = load_feedbacks()
+    if item.filename not in data:
+        data[item.filename] = []
+    
+    # Existing IDs 중 가장 큰 값 + 1 (없으면 1)
+    existing_ids = [f["id"] for f in data[item.filename]]
+    next_id = max(existing_ids) + 1 if existing_ids else 1
+    
+    new_entry = {
+        "id": next_id,
+        "measure": item.measure,
+        "text": item.text,
+        "created_at": datetime.now().strftime("%Y-%m-%d %H:%M")
+    }
+    
+    data[item.filename].append(new_entry)
+    save_feedbacks(data)
+    return {"status": "success", "feedback": new_entry}
+
+# 3. 피드백 삭제
+@app.delete("/api/feedback/{filename:path}/{feedback_id}")
+def delete_feedback(filename: str, feedback_id: int):
+    data = load_feedbacks()
+    if filename in data:
+        data[filename] = [f for f in data[filename] if f["id"] != feedback_id]
+        save_feedbacks(data)
+        return {"status": "success"}
+    raise HTTPException(status_code=404, detail="해당 피드백을 찾을 수 없습니다.")
 
 if __name__ == "__main__":
     import uvicorn
