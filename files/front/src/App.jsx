@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
+import ReferencePlayer from './ReferencePlayer';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://project-m-backend-ar2l.onrender.com';
 
@@ -34,17 +35,14 @@ function App() {
   const [bpm, setBpm] = useState(120);
   const [isMetronomeActive, setIsMetronomeActive] = useState(false);
 
-    // --- 🎤 실시간 마이크 & 웹소켓 오토 스크롤 상태 ---
+  // --- 🎤 실시간 마이크 & 웹소켓 오토 스크롤 상태 ---
   const [isListening, setIsListening] = useState(false);
   const socketRef = useRef(null);
-  const mediaRecorderRef = useRef(null);
   const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
   const sourceRef = useRef(null);
   const [currentMeasure, setCurrentMeasure] = useState(1); // 현재 감지된 마디 번호 상태
-
-  
 
   // Web Audio API를 이용해 짧고 명확한 메트로놈 틱 소리 재생
   const playClick = () => {
@@ -57,8 +55,11 @@ function App() {
       osc.frequency.setValueAtTime(800, audioCtx.currentTime); // 800Hz 톤
       
       gain.gain.setValueAtTime(1, audioCtx.currentTime);
-      gain.gain.exponentialRampToValueValueAtTime 
-      gain.gain.exponentialRampToValueAtTime ? gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05) : gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+      if (gain.gain.exponentialRampToValueAtTime) {
+        gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+      } else {
+        gain.gain.linearRampToValueAtTime(0.001, audioCtx.currentTime + 0.05);
+      }
 
       osc.connect(gain);
       gain.connect(audioCtx.destination);
@@ -88,10 +89,9 @@ function App() {
     if (isNaN(val)) {
       setBpm(60);
     } else {
-      setBpm(Math.max(40, Math.min(240, val))); // 40~240 제한
+      setBpm(Math.max(40, Math.min(240, val)));
     }
   };
-  // ---------------------------------
 
   const [viewportSize, setViewportSize] = useState({ w: window.innerWidth, h: window.innerHeight });
   useEffect(() => {
@@ -145,7 +145,6 @@ function App() {
   const [isDrawingMode, setIsDrawingMode] = useState(false); 
   const [penColor, setPenColor] = useState('#ff4444'); 
   const [penWidth, setPenWidth] = useState(3); 
-  const [isHighlighter, setIsHighlighter] = useState(false);
   const [tool, setTool] = useState('pen');
   const [highlighterOpacity, setHighlighterOpacity] = useState(0.3);
   
@@ -246,29 +245,25 @@ function App() {
 
         ctx.lineTo((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
         if (tool === 'eraser') {
-                  // 🧹 지우개: 적당히 지워지도록 크기 설정
-                  ctx.globalCompositeOperation = 'destination-out';
-                  ctx.lineWidth = 15; 
-                  ctx.globalAlpha = 1.0;
-            } else if (tool === 'highlighter') {
-                      // 🖍️ 형광펜: 'multiply' 모드를 사용하여 밑에 있는 검은 음표가 비치도록 설정!
-                      ctx.globalCompositeOperation = 'multiply';
-                      ctx.strokeStyle = penColor;
-                      ctx.lineWidth = 3; 
-                      ctx.globalAlpha = highlighterOpacity; 
-            } else {
-                  // 🖊️ 펜 (얇고 사각거리는 노트 필기 감성 - 음표를 가리지 않는 극세사 펜!)
-                  ctx.globalCompositeOperation = 'source-over';
-                  ctx.strokeStyle = penColor;
-                  ctx.lineWidth = 0.1; 
-                  ctx.globalAlpha = 1.0; 
-                } 
+          ctx.globalCompositeOperation = 'destination-out';
+          ctx.lineWidth = 15; 
+          ctx.globalAlpha = 1.0;
+        } else if (tool === 'highlighter') {
+          ctx.globalCompositeOperation = 'multiply';
+          ctx.strokeStyle = penColor;
+          ctx.lineWidth = 12; 
+          ctx.globalAlpha = highlighterOpacity; 
+        } else {
+          ctx.globalCompositeOperation = 'source-over';
+          ctx.strokeStyle = penColor;
+          ctx.lineWidth = penWidth; 
+          ctx.globalAlpha = 1.0; 
+        } 
 
-                ctx.lineCap = 'round';
-                ctx.lineJoin = 'round';
-                
-                ctx.stroke();
-              };
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.stroke();
+      };
 
       const stopDrawing = () => {
         if (!isDrawing) return;
@@ -281,133 +276,90 @@ function App() {
       canvas.onmouseup = stopDrawing;
       canvas.onmouseleave = stopDrawing;
     });
-  }, [songModeActive, scoreImages, isDrawingMode, penColor, penWidth, isHighlighter,tool]);
+  }, [songModeActive, scoreImages, isDrawingMode, penColor, penWidth, tool, highlighterOpacity]);
 
-  const clearCanvas = () => {
-    scoreImages.forEach((_, index) => {
-      const canvas = canvasRefs.current[index];
-      if (canvas) {
-        const ctx = canvas.getContext('2d');
-        ctx.clearRect(0, 0, canvas.width, canvas.height);
-      }
-    });
-  };
+  const startLiveSync = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const wsProtocol = BACKEND_URL.startsWith('https') ? 'wss' : 'ws';
+      const wsHost = BACKEND_URL.replace(/^https?:\/\//, '');
+      const ws = new WebSocket(`${wsProtocol}://${wsHost}/ws/audio-sync`);
+      socketRef.current = ws;
 
-const startLiveSync = async () => {
-  try {
-    // 1. 마이크 스트림 권한 획득
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    
-    // 2. 동적 웹소켓 URL 생성
-    const wsProtocol = BACKEND_URL.startsWith('https') ? 'wss' : 'ws';
-    const wsHost = BACKEND_URL.replace(/^https?:\/\//, '');
-    const ws = new WebSocket(`${wsProtocol}://${wsHost}/ws/audio-sync`);
-    socketRef.current = ws;
+      ws.onopen = () => {
+        console.log('백엔드 오디오 웹소켓 연결 완료');
+        const filename = uploadResponse?.filename || '';
+        ws.send(JSON.stringify({ filename: filename }));
+        setIsListening(true);
+        alert('실시간 연주 감지가 시작되었습니다!');
+      };
 
-    ws.onopen = () => {
-      console.log('백엔드 오디오 웹소켓 연결 완료');
-      
-      // [필수 프로토콜] 연결 직후 기준 악보 파일명 전송
-      const filename = uploadResponse?.filename || '';
-      ws.send(JSON.stringify({ filename: filename }));
-      console.log(`[Handshake] 기준 악보 전송: ${filename}`);
+      ws.onmessage = (event) => {
+        const data = JSON.parse(event.data);
+        if (data.measure) {
+          setCurrentMeasure(data.measure);
+        }
+      };
 
-      setIsListening(true);
-      alert('실시간 연주 감지가 시작되었습니다! 연주를 시작하세요.');
-    };
+      ws.onclose = () => {
+        stopLiveSync();
+      };
 
-    ws.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      console.log('서버 응답:', data);
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      const audioCtx = new AudioContextClass({ sampleRate: 22050 });
+      audioContextRef.current = audioCtx;
 
-      if (data.measure) {
-        setCurrentMeasure(data.measure);
-      }
+      const source = audioCtx.createMediaStreamSource(stream);
+      sourceRef.current = source;
 
-      // 마디가 전환되었거나(trigger) 감지되었을 때 페이지 스크롤 등의 액션 수행
-      if (data.status === 'trigger') {
-        console.log(`🎵 [연주 감지] 마디 전환: ${data.measure}마디 (모드: ${data.mode}, 신뢰도: ${data.confidence})`);
-        
-        // 예시: 마디 번호나 진행 상황에 맞춰 페이지 자동 넘김 로직 연결 가능
-        // 필요에 따라 특정 마디가 속한 페이지로 이동하는 로직을 구현할 수 있습니다.
-      }
-    };
+      const processor = audioCtx.createScriptProcessor(4096, 1, 1);
+      processorRef.current = processor;
 
-    ws.onclose = () => {
-      console.log('웹소켓 연결 종료됨');
-      stopLiveSync();
-    };
+      processor.onaudioprocess = (e) => {
+        if (ws.readyState === WebSocket.OPEN) {
+          const inputData = e.inputBuffer.getChannelData(0);
+          ws.send(inputData.buffer);
+        }
+      };
 
-    // 3. Web Audio API를 이용한 Raw Float32 PCM 캡처 및 실시간 스트리밍
-    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
-    const audioCtx = new AudioContextClass({ sampleRate: 22050 }); // 백엔드 SR(22050)과 맞춤
-    audioContextRef.current = audioCtx;
+      source.connect(processor);
+      processor.connect(audioCtx.destination);
 
-    const source = audioCtx.createMediaStreamSource(stream);
-    sourceRef.current = source;
-
-    // 버퍼 사이즈 4096 크기로 오디오 스트림 쪼개기
-    const processor = audioCtx.createScriptProcessor(4096, 1, 1);
-    processorRef.current = processor;
-
-    processor.onaudioprocess = (e) => {
-      if (ws.readyState === WebSocket.OPEN) {
-        const inputData = e.inputBuffer.getChannelData(0); // Float32Array
-        // Float32Array의 raw binary buffer를 그대로 전송
-        ws.send(inputData.buffer);
-      }
-    };
-
-    source.connect(processor);
-    processor.connect(audioCtx.destination); // (소리가 스피커로 출력되지 않게 하려면 가인 노드 조절 가능하나 보통 마이크 입력은 페드백 주의)
-
-  } catch (err) {
-    console.error('마이크 연결 실패:', err);
-    alert('마이크 접근 권한을 확인해주세요.');
-    setIsListening(false);
-  }
-};
-
-const stopLiveSync = () => {
-  // Web Audio 자원 해제
-  if (processorRef.current && audioContextRef.current) {
-    processorRef.current.disconnect();
-    sourceRef.current?.disconnect();
-    audioContextRef.current.close();
-    processorRef.current = null;
-    audioContextRef.current = null;
-    sourceRef.current = null;
-  }
-
-  // 웹소켓 종료
-  if (socketRef.current) {
-    socketRef.current.close();
-    socketRef.current = null;
-  }
-
-  setIsListening(false);
-  console.log('실시간 연주 감지가 중지되었습니다.');
-};
-
-// 🎵 실시간 연주 마디(currentMeasure) 변경에 따른 자동 페이지 넘김/스크롤 로직
-useEffect(() => {
-  if (!isListening || !currentMeasure) return;
-  const MEASURES_PER_PAGE = 8; // 한 페이지당 마디 수
-  const pageIndex = Math.floor((currentMeasure - 1) / MEASURES_PER_PAGE);
-
-  if (pageIndex >= 0 && pageIndex < scoreImages.length) {
-    scrollToPage(pageIndex);
-    console.log(`🎤 연주 싱크: ${currentMeasure}마디 감지 -> ${pageIndex + 1}페이지로 이동`);
-  }
-}, [currentMeasure, isListening, scoreImages.length]);
-
-  const scrollToMeasure = (measureNumber) => {
-    const element = document.getElementById(`measure-${measureNumber}`);
-    if (element) {
-      element.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (err) {
+      console.error('마이크 연결 실패:', err);
+      alert('마이크 접근 권한을 확인해주세요.');
+      setIsListening(false);
     }
   };
-  
+
+  const stopLiveSync = () => {
+    if (processorRef.current && audioContextRef.current) {
+      processorRef.current.disconnect();
+      sourceRef.current?.disconnect();
+      audioContextRef.current.close();
+      processorRef.current = null;
+      audioContextRef.current = null;
+      sourceRef.current = null;
+    }
+
+    if (socketRef.current) {
+      socketRef.current.close();
+      socketRef.current = null;
+    }
+
+    setIsListening(false);
+  };
+
+  useEffect(() => {
+    if (!isListening || !currentMeasure) return;
+    const MEASURES_PER_PAGE = 8;
+    const pageIndex = Math.floor((currentMeasure - 1) / MEASURES_PER_PAGE);
+
+    if (pageIndex >= 0 && pageIndex < scoreImages.length) {
+      scrollToPage(pageIndex);
+    }
+  }, [currentMeasure, isListening, scoreImages.length]);
+
   return (
     <div style={{ padding: '0px', fontFamily: 'Arial, sans-serif', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#121212', color: 'white' }}>
       
@@ -419,7 +371,7 @@ useEffect(() => {
                     onClick={() => setSidebarOpen(!sidebarOpen)} 
                     style={{ padding: '6px 12px', backgroundColor: '#333', color: 'white', border: '1px solid #555', borderRadius: '4px', cursor: 'pointer', fontSize: '13px' }}
                 >
-                    {sidebarOpen ? '📁 목록 닫기' : '📂 목록 열기'}
+                    {sidebarOpen ? '📁 사이드바 닫기' : '📂 사이드바 열기'}
                 </button>
             )}
         </div>
@@ -474,11 +426,22 @@ useEffect(() => {
           /* 악보 뷰어 + 필기 모드 인터페이스 */
           <div style={{ width: '100%', height: '100%', display: 'flex', overflow: 'hidden' }}>
             
-            {/* 페이지 목록 사이드바 */}
+            {/* 좌측 사이드바 (페이지 목록 + 교보재 레퍼런스 플레이어) */}
             {sidebarOpen && (
-              <div style={{ width: '220px', backgroundColor: '#181818', borderRight: '1px solid #333', display: 'flex', flexDirection: 'column', height: '100%', zIndex: 5 }}>
-                <div style={{ padding: '12px 15px', borderBottom: '1px solid #333', backgroundColor: '#1e1e1e' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#8BC34A' }}>📑 페이지 목록 ({scoreImages.length}쪽)</span>
+              <div style={{ width: '280px', backgroundColor: '#181818', borderRight: '1px solid #333', display: 'flex', flexDirection: 'column', height: '100%', zIndex: 5 }}>
+                
+                {/* 스마트 교보재 레퍼런스 위젯 */}
+                <div style={{ borderBottom: '1px solid #333', overflowY: 'auto' }}>
+                  <ReferencePlayer 
+                    filename={uploadResponse?.filename} 
+                    backendUrl={BACKEND_URL}
+                    currentMeasure={currentMeasure}
+                  />
+                </div>
+
+                {/* 악보 페이지 목록 */}
+                <div style={{ padding: '10px 15px', borderBottom: '1px solid #333', backgroundColor: '#1e1e1e' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#8BC34A' }}>📑 악보 페이지 ({scoreImages.length}쪽)</span>
                 </div>
                 <div style={{ flex: 1, overflowY: 'auto', padding: '10px' }}>
                   {scoreImages.map((_, index) => (
@@ -515,12 +478,12 @@ useEffect(() => {
                     <span style={{ color: '#8BC34A', fontWeight: 'bold' }}>📂 {uploadResponse?.filename}</span>
                   </div>
 
-                  {/* 중앙/우측 컨트롤 그룹 (메트로놈 + 필기 툴바 + 실시간 감지) */}
+                  {/* 메트로놈 + 필기 툴바 + 실시간 감지 */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     
-                    {/* 🎵 메트로놈 위젯 */}
+                    {/* 🎵 메트로놈 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#252525', padding: '4px 10px', borderRadius: '6px', border: '1px solid #444' }}>
-                      <span style={{ fontSize: '12px', color: '#FF9800', fontWeight: 'bold' }}>metronome</span>
+                      <span style={{ fontSize: '12px', color: '#FF9800', fontWeight: 'bold' }}>Metronome</span>
                       <button 
                         onClick={() => setBpm((prev) => Math.max(40, prev - 5))}
                         style={{ padding: '2px 6px', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px' }}
@@ -548,7 +511,7 @@ useEffect(() => {
                       </button>
                     </div>
 
-                    {/* ✏️ 펜 / 형광펜 / 지우개 선택 툴바 */}
+                    {/* ✏️ 펜 / 형광펜 / 지우개 툴바 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#252525', padding: '4px 8px', borderRadius: '6px', border: '1px solid #444' }}>
                       <button 
                         onClick={() => { setTool('pen'); setIsDrawingMode(true); }}
@@ -581,7 +544,7 @@ useEffect(() => {
                         🧹 지우개
                       </button>
                       
-                    {tool === 'highlighter' && (
+                      {tool === 'highlighter' && (
                         <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: '4px', paddingLeft: '6px', borderLeft: '1px solid #444', fontSize: '11px', color: '#aaa' }}>
                           <span>투명도: {Math.round(highlighterOpacity * 100)}%</span>
                           <input 
@@ -596,39 +559,35 @@ useEffect(() => {
                         </div>
                       )}
 
-                      {/* 🎨 [추가] 펜 및 형광펜 색상 선택 팔레트 */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#252525', padding: '4px 8px', borderRadius: '6px', border: '1px solid #444' }}>
-                      <span style={{ fontSize: '11px', color: '#aaa' }}>색상:</span>
-                      {[
-                        { name: '빨강', hex: '#f50c0c' },
-                        { name: '노랑', hex: '#FFEB3B' },
-                        { name: '연두', hex: '#8BC34A' },
-                        { name: '하늘', hex: '#03A9F4' },
-                        { name: '민트', hex: '#8eebcf' },
-                        { name: '주황', hex: '#FF9800' },
-                        ,                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     
-                      ].map((c) => (
-                        <button
-                          key={c.hex}
-                          onClick={() => setPenColor(c.hex)}
-                          title={c.name}
-                          style={{
-                            width: '18px',
-                            height: '18px',
-                            backgroundColor: c.hex,
-                            border: penColor === c.hex ? '2px solid #ffffff' : '1px solid #555',
-                            borderRadius: '50%',
-                            cursor: 'pointer',
-                            padding: '0',
-                            boxShadow: penColor === c.hex ? '0 0 4px rgba(255,255,255,0.8)' : 'none',
-                            transform: penColor === c.hex ? 'scale(1.15)' : 'scale(1)',
-                            transition: 'all 0.15s ease'
-                          }}
-                        />
-                      ))}
-                    </div>
+                      {/* 🎨 펜 및 형광펜 색상 팔레트 */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px', paddingLeft: '6px', borderLeft: '1px solid #444' }}>
+                        {[
+                          { name: '빨강', hex: '#f50c0c' },
+                          { name: '노랑', hex: '#FFEB3B' },
+                          { name: '연두', hex: '#8BC34A' },
+                          { name: '하늘', hex: '#03A9F4' },
+                          { name: '민트', hex: '#8eebcf' },
+                          { name: '주황', hex: '#FF9800' }
+                        ].map((c) => (
+                          <button
+                            key={c.hex}
+                            onClick={() => setPenColor(c.hex)}
+                            title={c.name}
+                            style={{
+                              width: '18px',
+                              height: '18px',
+                              backgroundColor: c.hex,
+                              border: penColor === c.hex ? '2px solid #ffffff' : '1px solid #555',
+                              borderRadius: '50%',
+                              cursor: 'pointer',
+                              padding: '0',
+                              transform: penColor === c.hex ? 'scale(1.15)' : 'scale(1)',
+                              transition: 'all 0.15s ease'
+                            }}
+                          />
+                        ))}
+                      </div>
 
-                      {/* 필기 모드 켜기/끄기 상태 토글 버튼 */}
                       <button 
                         onClick={() => setIsDrawingMode(!isDrawingMode)}
                         style={{ 
@@ -638,11 +597,11 @@ useEffect(() => {
                           padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' 
                         }}
                       >
-                        {isDrawingMode ? '✍️ ON' : '🔒 OFF'}
+                        {isDrawingMode ? '✍️ 필기 ON' : '🔒 필기 OFF'}
                       </button>
                     </div>
 
-                    {/* 🎤 실시간 연주 감지 버튼 및 상태 표시 */}
+                    {/* 🎤 실시간 연주 감지 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                       <button 
                         onClick={isListening ? stopLiveSync : startLiveSync}
@@ -667,9 +626,7 @@ useEffect(() => {
                           borderRadius: '4px', 
                           color: '#8BC34A', 
                           fontSize: '12px', 
-                          fontWeight: 'bold',
-                          display: 'flex',
-                          alignItems: 'center'
+                          fontWeight: 'bold'
                         }}>
                           🎯 {currentMeasure}마디
                         </div>
@@ -690,7 +647,7 @@ useEffect(() => {
                                 <span style={{ padding: '4px 8px', backgroundColor: '#1a1a1a', color: '#8BC34A', borderRadius: '4px', fontSize: '12px', alignSelf: 'center' }}>{zoomLevel}%</span>
                             </div>
 
-                            {/* 네이티브 스크롤 컨테이너 */}
+                            {/* 악보 스크롤 컨테이너 */}
                             <div
                                 ref={scrollContainerRef}
                                 style={{
@@ -753,7 +710,7 @@ useEffect(() => {
                                                           }
                                                 }
                                             />
-                                            {/* 악보 이미지 위에 겹쳐지는 필기용 투명 캔버스 */}
+                                            {/* 악보 필기용 캔버스 */}
                                             <canvas
                                                 ref={(el) => (canvasRefs.current[index] = el)}
                                                 style={{
