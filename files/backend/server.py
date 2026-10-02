@@ -16,9 +16,10 @@ import score_tracking
 from datetime import datetime
 from pydantic import BaseModel
 from typing import Optional
+from reference_service import router as reference_router
 
 app = FastAPI(title="AI Music Lesson Assistant API", version="1.0")
-
+app.include_router(reference_router)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app.mount("/etc", StaticFiles(directory=BASE_DIR), name="etc")
 
