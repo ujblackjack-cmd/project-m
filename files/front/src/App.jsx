@@ -31,20 +31,22 @@ function App() {
   const zoomOut = () => setZoomLevel((z) => Math.max(40, z - 20));
   const resetZoom = () => setZoomLevel(100);
 
-  // --- 🎹 메트로놈 관련 상태 및 로직 ---
+  // 메트로놈 관련 상태
   const [bpm, setBpm] = useState(120);
   const [isMetronomeActive, setIsMetronomeActive] = useState(false);
 
-  // --- 🎤 실시간 마이크 & 웹소켓 오토 스크롤 상태 ---
+  // 🎤 실시간 마이크 & 웹소켓 연동 상태
   const [isListening, setIsListening] = useState(false);
   const socketRef = useRef(null);
-  const [currentPageIndex, setCurrentPageIndex] = useState(0);
   const audioContextRef = useRef(null);
   const processorRef = useRef(null);
   const sourceRef = useRef(null);
-  const [currentMeasure, setCurrentMeasure] = useState(1); // 현재 감지된 마디 번호 상태
+  
+  const [currentMeasure, setCurrentMeasure] = useState(1);
+  const [micLevel, setMicLevel] = useState(0); // 마이크 오디오 입력 볼륨 (0~100%)
+  const [measureNotice, setMeasureNotice] = useState(''); // 마디 변경 토스트 알림
 
-  // Web Audio API를 이용해 짧고 명확한 메트로놈 틱 소리 재생
+  // 메트로놈 틱 소리 재생
   const playClick = () => {
     try {
       const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -52,7 +54,7 @@ function App() {
       const gain = audioCtx.createGain();
       
       osc.type = 'sine';
-      osc.frequency.setValueAtTime(800, audioCtx.currentTime); // 800Hz 톤
+      osc.frequency.setValueAtTime(800, audioCtx.currentTime);
       
       gain.gain.setValueAtTime(1, audioCtx.currentTime);
       if (gain.gain.exponentialRampToValueAtTime) {
@@ -67,7 +69,7 @@ function App() {
       osc.start();
       osc.stop(audioCtx.currentTime + 0.05);
     } catch (e) {
-      console.error('메트로놈 오디오 재생 오류:', e);
+      console.error('메트로놈 오류:', e);
     }
   };
 
@@ -86,11 +88,7 @@ function App() {
 
   const handleBpmChange = (e) => {
     const val = parseInt(e.target.value, 10);
-    if (isNaN(val)) {
-      setBpm(60);
-    } else {
-      setBpm(Math.max(40, Math.min(240, val)));
-    }
+    setBpm(isNaN(val) ? 60 : Math.max(40, Math.min(240, val)));
   };
 
   const [viewportSize, setViewportSize] = useState({ w: window.innerWidth, h: window.innerHeight });
@@ -141,9 +139,9 @@ function App() {
     };
   };
 
-  // 드로잉(필기/형광펜) 관련 상태
+  // 필기/형광펜 상태
   const [isDrawingMode, setIsDrawingMode] = useState(false); 
-  const [penColor, setPenColor] = useState('#ff4444'); 
+  const [penColor, setPenColor] = useState('#f50c0c'); 
   const [penWidth, setPenWidth] = useState(3); 
   const [tool, setTool] = useState('pen');
   const [highlighterOpacity, setHighlighterOpacity] = useState(0.3);
@@ -165,18 +163,13 @@ function App() {
 
     const formData = new FormData();
     formData.append('file', targetFile);
-
     setLoading(true);
 
     try {
       const response = await axios.post(`${BACKEND_URL}/api/score/upload`, formData, {
-        headers: {
-          'ngrok-skip-browser-warning': 'true',
-        },
+        headers: { 'ngrok-skip-browser-warning': 'true' },
       });
 
-      console.log('업로드 및 분석 성공:', response.data);
-      
       const newResponse = response.data;
       const newImages = newResponse.sequence_data;
 
@@ -191,7 +184,7 @@ function App() {
 
     } catch (error) {
       console.error('업로드 실패:', error);
-      alert('악보 처리 중 오류가 발생했습니다. 백엔드 서버 상태와 파일 형식을 확인하세요.');
+      alert('악보 처리 중 오류가 발생했습니다.');
     } finally {
       setLoading(false);
     }
@@ -212,17 +205,13 @@ function App() {
       if (!canvas || !img) return;
 
       const ctx = canvas.getContext('2d');
-      
       const updateCanvasSize = () => {
         canvas.width = img.naturalWidth || img.width;
         canvas.height = img.naturalHeight || img.height;
       };
 
-      if (img.complete) {
-        updateCanvasSize();
-      } else {
-        img.onload = updateCanvasSize;
-      }
+      if (img.complete) updateCanvasSize();
+      else img.onload = updateCanvasSize;
 
       let isDrawing = false;
 
@@ -232,7 +221,6 @@ function App() {
         const rect = canvas.getBoundingClientRect();
         const scaleX = canvas.width / rect.width;
         const scaleY = canvas.height / rect.height;
-        
         ctx.beginPath();
         ctx.moveTo((e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY);
       };
@@ -278,6 +266,16 @@ function App() {
     });
   }, [songModeActive, scoreImages, isDrawingMode, penColor, penWidth, tool, highlighterOpacity]);
 
+  // 마디 변경 시 토스트 알림 감지
+  useEffect(() => {
+    if (isListening && currentMeasure) {
+      setMeasureNotice(`➡️ ${currentMeasure}마디 감지됨`);
+      const timer = setTimeout(() => setMeasureNotice(''), 1800);
+      return () => clearTimeout(timer);
+    }
+  }, [currentMeasure, isListening]);
+
+  // 실시간 마이크 감지 시작
   const startLiveSync = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -287,11 +285,10 @@ function App() {
       socketRef.current = ws;
 
       ws.onopen = () => {
-        console.log('백엔드 오디오 웹소켓 연결 완료');
+        console.log('오디오 웹소켓 연결 완료');
         const filename = uploadResponse?.filename || '';
-        ws.send(JSON.stringify({ filename: filename }));
+        ws.send(JSON.stringify({ filename }));
         setIsListening(true);
-        alert('실시간 연주 감지가 시작되었습니다!');
       };
 
       ws.onmessage = (event) => {
@@ -319,6 +316,14 @@ function App() {
         if (ws.readyState === WebSocket.OPEN) {
           const inputData = e.inputBuffer.getChannelData(0);
           ws.send(inputData.buffer);
+
+          // 🎙️ 마이크 볼륨 레벨(RMS) 계산하여 UI에 전달
+          let sum = 0;
+          for (let i = 0; i < inputData.length; i++) {
+            sum += inputData[i] * inputData[i];
+          }
+          const rms = Math.sqrt(sum / inputData.length);
+          setMicLevel(Math.min(100, Math.round(rms * 400))); 
         }
       };
 
@@ -348,6 +353,7 @@ function App() {
     }
 
     setIsListening(false);
+    setMicLevel(0);
   };
 
   useEffect(() => {
@@ -363,6 +369,21 @@ function App() {
   return (
     <div style={{ padding: '0px', fontFamily: 'Arial, sans-serif', height: '100vh', display: 'flex', flexDirection: 'column', backgroundColor: '#121212', color: 'white' }}>
       
+      {/* CSS 애니메이션 정의 */}
+      <style>{`
+        @keyframes pulseRed {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.9); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+        @keyframes fadeInOut {
+          0% { opacity: 0; transform: translateY(-10px); }
+          20% { opacity: 1; transform: translateY(0); }
+          80% { opacity: 1; transform: translateY(0); }
+          100% { opacity: 0; transform: translateY(-10px); }
+        }
+      `}</style>
+
       {/* 헤더 */}
       <header style={{ backgroundColor: '#1e1e1e', padding: '12px 20px', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -423,14 +444,14 @@ function App() {
             </div>
           </div>
         ) : (
-          /* 악보 뷰어 + 필기 모드 인터페이스 */
+          /* 악보 뷰어 인터페이스 */
           <div style={{ width: '100%', height: '100%', display: 'flex', overflow: 'hidden' }}>
             
-            {/* 좌측 사이드바 (페이지 목록 + 교보재 레퍼런스 플레이어) */}
+            {/* 좌측 사이드바 */}
             {sidebarOpen && (
               <div style={{ width: '280px', backgroundColor: '#181818', borderRight: '1px solid #333', display: 'flex', flexDirection: 'column', height: '100%', zIndex: 5 }}>
                 
-                {/* 스마트 교보재 레퍼런스 위젯 */}
+                {/* 레퍼런스 플레이어 */}
                 <div style={{ borderBottom: '1px solid #333', overflowY: 'auto' }}>
                   <ReferencePlayer 
                     filename={uploadResponse?.filename} 
@@ -478,131 +499,34 @@ function App() {
                     <span style={{ color: '#8BC34A', fontWeight: 'bold' }}>📂 {uploadResponse?.filename}</span>
                   </div>
 
-                  {/* 메트로놈 + 필기 툴바 + 실시간 감지 */}
+                  {/* 툴바 항목들 */}
                   <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
                     
-                    {/* 🎵 메트로놈 */}
+                    {/* 메트로놈 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', backgroundColor: '#252525', padding: '4px 10px', borderRadius: '6px', border: '1px solid #444' }}>
                       <span style={{ fontSize: '12px', color: '#FF9800', fontWeight: 'bold' }}>Metronome</span>
-                      <button 
-                        onClick={() => setBpm((prev) => Math.max(40, prev - 5))}
-                        style={{ padding: '2px 6px', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px' }}
-                      >
-                        -
-                      </button>
-                      <input 
-                        type="number" 
-                        value={bpm} 
-                        onChange={handleBpmChange}
-                        style={{ width: '42px', textAlign: 'center', backgroundColor: '#111', color: '#8BC34A', border: '1px solid #444', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', padding: '2px 0' }}
-                      />
+                      <button onClick={() => setBpm((prev) => Math.max(40, prev - 5))} style={{ padding: '2px 6px', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px' }}>-</button>
+                      <input type="number" value={bpm} onChange={handleBpmChange} style={{ width: '42px', textAlign: 'center', backgroundColor: '#111', color: '#8BC34A', border: '1px solid #444', borderRadius: '3px', fontSize: '12px', fontWeight: 'bold', padding: '2px 0' }} />
                       <span style={{ fontSize: '11px', color: '#aaa' }}>BPM</span>
-                      <button 
-                        onClick={() => setBpm((prev) => Math.min(240, prev + 5))}
-                        style={{ padding: '2px 6px', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px' }}
-                      >
-                        +
-                      </button>
-                      <button 
-                        onClick={() => setIsMetronomeActive(!isMetronomeActive)}
-                        style={{ marginLeft: '4px', padding: '3px 8px', backgroundColor: isMetronomeActive ? '#d32f2f' : '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}
-                      >
+                      <button onClick={() => setBpm((prev) => Math.min(240, prev + 5))} style={{ padding: '2px 6px', backgroundColor: '#333', color: 'white', border: 'none', borderRadius: '3px', cursor: 'pointer', fontSize: '11px' }}>+</button>
+                      <button onClick={() => setIsMetronomeActive(!isMetronomeActive)} style={{ marginLeft: '4px', padding: '3px 8px', backgroundColor: isMetronomeActive ? '#d32f2f' : '#4CAF50', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
                         {isMetronomeActive ? '⏹ 정지' : '▶ 시작'}
                       </button>
                     </div>
 
-                    {/* ✏️ 펜 / 형광펜 / 지우개 툴바 */}
+                    {/* 필기 툴바 */}
                     <div style={{ display: 'flex', alignItems: 'center', gap: '4px', backgroundColor: '#252525', padding: '4px 8px', borderRadius: '6px', border: '1px solid #444' }}>
-                      <button 
-                        onClick={() => { setTool('pen'); setIsDrawingMode(true); }}
-                        style={{ 
-                          backgroundColor: tool === 'pen' && isDrawingMode ? '#2196F3' : '#333', 
-                          color: 'white',
-                          padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' 
-                        }}
-                      >
-                        ✏️ 펜
-                      </button>
-                      <button 
-                        onClick={() => { setTool('highlighter'); setIsDrawingMode(true); }}
-                        style={{ 
-                          backgroundColor: tool === 'highlighter' && isDrawingMode ? '#2196F3' : '#333', 
-                          color: 'white',
-                          padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' 
-                        }}
-                      >
-                        🖍️ 형광펜
-                      </button>
-                      <button 
-                        onClick={() => { setTool('eraser'); setIsDrawingMode(true); }}
-                        style={{ 
-                          backgroundColor: tool === 'eraser' && isDrawingMode ? '#ff5252' : '#333', 
-                          color: 'white',
-                          padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' 
-                        }}
-                      >
-                        🧹 지우개
-                      </button>
+                      <button onClick={() => { setTool('pen'); setIsDrawingMode(true); }} style={{ backgroundColor: tool === 'pen' && isDrawingMode ? '#2196F3' : '#333', color: 'white', padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>✏️ 펜</button>
+                      <button onClick={() => { setTool('highlighter'); setIsDrawingMode(true); }} style={{ backgroundColor: tool === 'highlighter' && isDrawingMode ? '#2196F3' : '#333', color: 'white', padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>🖍️ 형광펜</button>
+                      <button onClick={() => { setTool('eraser'); setIsDrawingMode(true); }} style={{ backgroundColor: tool === 'eraser' && isDrawingMode ? '#ff5252' : '#333', color: 'white', padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>🧹 지우개</button>
                       
-                      {tool === 'highlighter' && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginLeft: '4px', paddingLeft: '6px', borderLeft: '1px solid #444', fontSize: '11px', color: '#aaa' }}>
-                          <span>투명도: {Math.round(highlighterOpacity * 100)}%</span>
-                          <input 
-                            type="range" 
-                            min="0.1" 
-                            max="0.8" 
-                            step="0.05" 
-                            value={highlighterOpacity} 
-                            onChange={(e) => setHighlighterOpacity(parseFloat(e.target.value))}
-                            style={{ width: '55px', cursor: 'pointer' }}
-                          />
-                        </div>
-                      )}
-
-                      {/* 🎨 펜 및 형광펜 색상 팔레트 */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: '6px', paddingLeft: '6px', borderLeft: '1px solid #444' }}>
-                        {[
-                          { name: '빨강', hex: '#f50c0c' },
-                          { name: '노랑', hex: '#FFEB3B' },
-                          { name: '연두', hex: '#8BC34A' },
-                          { name: '하늘', hex: '#03A9F4' },
-                          { name: '민트', hex: '#8eebcf' },
-                          { name: '주황', hex: '#FF9800' }
-                        ].map((c) => (
-                          <button
-                            key={c.hex}
-                            onClick={() => setPenColor(c.hex)}
-                            title={c.name}
-                            style={{
-                              width: '18px',
-                              height: '18px',
-                              backgroundColor: c.hex,
-                              border: penColor === c.hex ? '2px solid #ffffff' : '1px solid #555',
-                              borderRadius: '50%',
-                              cursor: 'pointer',
-                              padding: '0',
-                              transform: penColor === c.hex ? 'scale(1.15)' : 'scale(1)',
-                              transition: 'all 0.15s ease'
-                            }}
-                          />
-                        ))}
-                      </div>
-
-                      <button 
-                        onClick={() => setIsDrawingMode(!isDrawingMode)}
-                        style={{ 
-                          marginLeft: '4px',
-                          backgroundColor: isDrawingMode ? '#4CAF50' : '#555', 
-                          color: 'white',
-                          padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' 
-                        }}
-                      >
+                      <button onClick={() => setIsDrawingMode(!isDrawingMode)} style={{ marginLeft: '4px', backgroundColor: isDrawingMode ? '#4CAF50' : '#555', color: 'white', padding: '4px 8px', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px', fontWeight: 'bold' }}>
                         {isDrawingMode ? '✍️ 필기 ON' : '🔒 필기 OFF'}
                       </button>
                     </div>
 
-                    {/* 🎤 실시간 연주 감지 */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    {/* 🎤 실시간 감지 버튼 & 마이크 오디오 레벨 바 */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: '#252525', padding: '4px 10px', borderRadius: '6px', border: '1px solid #444' }}>
                       <button 
                         onClick={isListening ? stopLiveSync : startLiveSync}
                         style={{ 
@@ -619,21 +543,70 @@ function App() {
                         {isListening ? '⏹ 감지 중지' : '🎤 실시간 연주 감지'}
                       </button>
 
+                      {/* 실시간 마이크 오디오 인디케이터 */}
                       {isListening && (
-                        <div style={{ 
-                          backgroundColor: '#333', 
-                          padding: '5px 10px', 
-                          borderRadius: '4px', 
-                          color: '#8BC34A', 
-                          fontSize: '12px', 
-                          fontWeight: 'bold'
-                        }}>
-                          🎯 {currentMeasure}마디
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <span style={{ fontSize: '10px', color: '#888' }}>MIC</span>
+                          <div style={{ width: '40px', height: '8px', backgroundColor: '#111', borderRadius: '4px', overflow: 'hidden', border: '1px solid #555' }}>
+                            <div style={{ width: `${micLevel}%`, height: '100%', backgroundColor: micLevel > 60 ? '#ff9800' : '#4CAF50', transition: 'width 0.1s ease' }} />
+                          </div>
                         </div>
                       )}
                     </div>
+
                   </div>
                 </div>
+
+                {/* 🎯 [신규] 화면 중앙 상단 실시간 추적 상태 플로팅 배너 */}
+                {isListening && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '15px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    zIndex: 20,
+                    backgroundColor: 'rgba(18, 18, 18, 0.9)',
+                    border: '2px solid #8BC34A',
+                    borderRadius: '24px',
+                    padding: '8px 20px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.8), 0 0 10px rgba(139, 195, 74, 0.4)'
+                  }}>
+                    <div style={{
+                      width: '10px',
+                      height: '10px',
+                      borderRadius: '50%',
+                      backgroundColor: '#ff4444',
+                      animation: 'pulseRed 1.2s infinite ease-in-out'
+                    }} />
+                    <span style={{ fontSize: '13px', color: '#ccc' }}>실시간 연주 감지 중...</span>
+                    <span style={{ fontSize: '16px', fontWeight: 'bold', color: '#8BC34A', borderLeft: '1px solid #444', paddingLeft: '10px' }}>
+                      🎯 {currentMeasure}마디
+                    </span>
+                  </div>
+                )}
+
+                {/* ➡️ [신규] 마디 변경 시 우측 상단 토스트 알림 */}
+                {measureNotice && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '60px',
+                    right: '25px',
+                    zIndex: 25,
+                    backgroundColor: '#FF9800',
+                    color: '#000',
+                    fontWeight: 'bold',
+                    padding: '8px 16px',
+                    borderRadius: '20px',
+                    fontSize: '13px',
+                    boxShadow: '0 4px 12px rgba(0,0,0,0.5)',
+                    animation: 'fadeInOut 1.8s ease'
+                  }}>
+                    {measureNotice}
+                  </div>
+                )}
 
                 {/* 악보 및 캔버스 렌더링 영역 */}
                 <div style={{ flex: 1, width: '100%', height: '100%', overflow: 'hidden', position: 'relative' }}>
@@ -710,7 +683,7 @@ function App() {
                                                           }
                                                 }
                                             />
-                                            {/* 악보 필기용 캔버스 */}
+                                            {/* 필기용 캔버스 */}
                                             <canvas
                                                 ref={(el) => (canvasRefs.current[index] = el)}
                                                 style={{
