@@ -17,11 +17,13 @@ from datetime import datetime
 from pydantic import BaseModel
 from typing import Optional
 from reference_service import router as reference_router
+from llm_tutor_service import router as tutor_router
 
 app = FastAPI(title="AI Music Lesson Assistant API", version="1.0")
 app.include_router(reference_router)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app.mount("/etc", StaticFiles(directory=BASE_DIR), name="etc")
+app.include_router(tutor_router)
 
 # 프론트엔드(React)와의 원활한 통신을 위한 CORS 설정
 app.add_middleware(
