@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import ReferencePlayer from './ReferencePlayer';
+import AiTutorPanel from './AiTutorPanel';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://project-m-backend-ar2l.onrender.com';
 
@@ -455,6 +456,22 @@ function App() {
                 <div style={{ borderBottom: '1px solid #333', overflowY: 'auto' }}>
                   <ReferencePlayer 
                     filename={uploadResponse?.filename} 
+                    backendUrl={BACKEND_URL}
+                    currentMeasure={currentMeasure}
+                  />
+                </div>
+
+                {/* 스마트 교보재 플레이어 & AI 레슨 코치 패널 */}
+                <div style={{ borderBottom: '1px solid #333', padding: '10px', overflowY: 'auto', maxHeight: '50%' }}>
+                  <ReferencePlayer 
+                    filename={uploadResponse?.filename} 
+                    backendUrl={BACKEND_URL}
+                    currentMeasure={currentMeasure}
+                  />
+                  
+                  {/* 🤖 [신규] AI 레슨 코치 패널 */}
+                  <AiTutorPanel 
+                    filename={uploadResponse?.filename}
                     backendUrl={BACKEND_URL}
                     currentMeasure={currentMeasure}
                   />
