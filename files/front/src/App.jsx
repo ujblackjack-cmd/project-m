@@ -2,12 +2,26 @@ import React, { useState, useRef, useEffect } from 'react';
 import axios from 'axios';
 import ReferencePlayer from './ReferencePlayer';
 import AiTutorPanel from './AiTutorPanel';
+import LessonHistoryModal from './LessonHistoryModal';
 
 const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || 'https://project-m-backend-ar2l.onrender.com';
 
 function App() {
   const [selectedFile, setSelectedFile] = useState(null);
   const [loading, setLoading] = useState(false);
+  
+  const [historyList, setHistoryList] = useState([]);
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+
+  const handleSaveHistory = (newItem) => {
+  setHistoryList(prev => {
+    // 최근 기록이 동일한 마디/내용이면 중복 추가 제외
+    if (prev.length > 0 && prev[0].measure === newItem.measure && prev[0].coaching === newItem.coaching) {
+      return prev;
+    }
+    return [newItem, ...prev];
+  });
+};
   
   const [songModeActive, setSongModeActive] = useState(() => {
     return localStorage.getItem('songModeActive') === 'true';
@@ -454,6 +468,25 @@ function App() {
                 
                 {/* 레퍼런스 플레이어 */}
                 <div style={{ borderBottom: '1px solid #333', overflowY: 'auto' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 'bold', color: '#fff' }}>🎼 레슨 제어판</span>
+                  <button 
+                    onClick={() => setIsHistoryOpen(true)}
+                    style={{
+                      padding: '6px 10px',
+                      backgroundColor: '#2e4a36',
+                      color: '#8BC34A',
+                      border: '1px solid #8BC34A',
+                      borderRadius: '6px',
+                      fontSize: '11px',
+                      fontWeight: 'bold',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px'
+                    }}
+                  >
+                    📝 오답 노트 ({historyList.length})
+                  </button>
                   <ReferencePlayer 
                     filename={uploadResponse?.filename} 
                     backendUrl={BACKEND_URL}

@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-export default function AiTutorPanel({ filename, backendUrl, currentMeasure }) {
+export default function AiTutorPanel({ filename, backendUrl, currentMeasure, onSaveHistory}) {
   const [coaching, setCoaching] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -15,7 +15,17 @@ export default function AiTutorPanel({ filename, backendUrl, currentMeasure }) {
         current_measure: measure || 1
       });
       if (res.data && res.data.coaching) {
-        setCoaching(res.data.coaching);
+        const newText = res.data.coaching;
+        setCoaching(newText);
+        
+        // 📝 상위로 히스토리 항목 전송
+        if (onSaveHistory) {
+          onSaveHistory({
+            measure: measure || 1,
+            coaching: newText,
+            time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+          });
+        }
       }
     } catch (err) {
       console.error("AI 코칭 로드 실패:", err);
