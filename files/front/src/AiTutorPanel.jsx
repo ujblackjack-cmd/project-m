@@ -4,6 +4,9 @@ import axios from 'axios';
 export default function AiTutorPanel({ filename, backendUrl, currentMeasure, onSaveHistory}) {
   const [coaching, setCoaching] = useState('');
   const [loading, setLoading] = useState(false);
+  const [isCollapsed, setIsCollapsed] = useState(false);
+  const [difficulty, setDifficulty] = useState('초급'); // 🎯 난이도 상태 추가
+  const panelRef = useRef(null);
 
   // 현재 마디 변경 시 AI 코칭 요청 함수
   const fetchCoaching = async (measure) => {
@@ -35,58 +38,109 @@ export default function AiTutorPanel({ filename, backendUrl, currentMeasure, onS
     }
   };
 
-  // 마디(currentMeasure)가 바뀔 때마다 AI 코칭 자동 업데이트
+  // 마디 또는 난이도가 바뀔 때 자동 조회
   useEffect(() => {
     if (filename && currentMeasure) {
-      fetchCoaching(currentMeasure);
+      fetchCoaching(currentMeasure, difficulty);
     }
-  }, [filename, currentMeasure]);
+  }, [filename, currentMeasure, difficulty]);
 
   return (
-    <div style={{
-      backgroundColor: '#1b241e',
-      border: '1px solid #2e4a36',
-      borderRadius: '8px',
-      padding: '12px',
-      margin: '10px 0',
-      color: '#e0e0e0'
-    }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-        <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#8BC34A', display: 'flex', alignItems: 'center', gap: '5px' }}>
-          🤖 AI 레슨 코치 <span style={{ fontSize: '11px', color: '#aaa', fontWeight: 'normal' }}>({currentMeasure}마디)</span>
-        </span>
-        <button 
-          onClick={() => fetchCoaching(currentMeasure)} 
-          disabled={loading}
-          style={{ 
-            padding: '2px 8px', 
-            backgroundColor: '#2e4a36', 
-            color: '#8BC34A', 
-            border: '1px solid #8BC34A', 
-            borderRadius: '4px', 
-            fontSize: '10px', 
-            cursor: 'pointer' 
-          }}
-        >
-          {loading ? '생성 중...' : '🔄 새로고침'}
-        </button>
+    <div 
+      ref={panelRef}
+      style={{
+        backgroundColor: '#1b241e',
+        border: '1px solid #2e4a36',
+        borderRadius: '10px',
+        padding: '12px',
+        margin: '12px 0',
+        color: '#e0e0e0',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+        touchAction: 'manipulation'
+      }}
+    >
+      {/* 헤더 영역 */}
+      <div 
+        style={{ 
+          display: 'flex', 
+          justifyContent: 'space-between', 
+          alignItems: 'center', 
+          cursor: 'pointer',
+          userSelect: 'none',
+          paddingBottom: isCollapsed ? '0' : '8px'
+        }}
+        onClick={() => setIsCollapsed(!isCollapsed)}
+      >
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+          <span style={{ fontSize: '14px' }}>🤖</span>
+          <span style={{ fontWeight: 'bold', fontSize: '13px', color: '#8BC34A' }}>
+            AI 레슨 코치
+          </span>
+          {currentMeasure && (
+            <span style={{ 
+              fontSize: '10px', 
+              backgroundColor: '#2e4a36', 
+              color: '#8BC34A', 
+              padding: '2px 6px', 
+              borderRadius: '10px',
+              fontWeight: 'bold' 
+            }}>
+              {currentMeasure}마디
+            </span>
+          )}
+        </div>
+
+        <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }} onClick={(e) => e.stopPropagation()}>
+          {/* 난이도 선택 버튼 3종 */}
+          {['초급', '중급', '고급'].map((lev) => (
+            <button
+              key={lev}
+              onClick={() => setDifficulty(lev)}
+              style={{
+                padding: '2px 6px',
+                backgroundColor: difficulty === lev ? '#8BC34A' : '#1e2d23',
+                color: difficulty === lev ? '#121914' : '#8BC34A',
+                border: '1px solid #8BC34A',
+                borderRadius: '4px',
+                fontSize: '10px',
+                fontWeight: 'bold',
+                cursor: 'pointer'
+              }}
+            >
+              {lev}
+            </button>
+          ))}
+          <span style={{ fontSize: '12px', color: '#888', paddingLeft: '4px', cursor: 'pointer' }} onClick={() => setIsCollapsed(!isCollapsed)}>
+            {isCollapsed ? '▼' : '▲'}
+          </span>
+        </div>
       </div>
 
-      <div style={{
-        fontSize: '12px',
-        lineHeight: '1.5',
-        backgroundColor: '#121914',
-        padding: '10px',
-        borderRadius: '6px',
-        whiteSpace: 'pre-wrap',
-        minHeight: '60px'
-      }}>
-        {loading ? (
-          <span style={{ color: '#888' }}>Gemini AI가 선생님 메모와 타임라인을 분석하고 있습니다...</span>
-        ) : (
-          coaching || '현재 마디에 대한 코칭 정보가 없습니다.'
-        )}
-      </div>
+      {/* 본문 카드 */}
+      {!isCollapsed && (
+        <div style={{
+          fontSize: '12px',
+          lineHeight: '1.6',
+          backgroundColor: '#121914',
+          border: '1px solid #1e2d23',
+          padding: '12px',
+          borderRadius: '8px',
+          whiteSpace: 'pre-wrap',
+          minHeight: '65px',
+          maxHeight: '200px',
+          overflowY: 'auto',
+          marginTop: '4px',
+          WebkitOverflowScrolling: 'touch'
+        }}>
+          {loading ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#888' }}>
+              <span>⏳ [{difficulty} 모드] Gemini AI가 분석 중입니다...</span>
+            </div>
+          ) : (
+            coaching || '현재 마디에 대한 코칭 정보가 없습니다.'
+          )}
+        </div>
+      )}
     </div>
   );
 }
