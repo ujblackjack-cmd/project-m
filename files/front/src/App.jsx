@@ -13,6 +13,9 @@ function App() {
   const [historyList, setHistoryList] = useState([]);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
 
+  const [tempoStatus, setTempoStatus] = useState('NORMAL'); // 'NORMAL' | 'SLOW' | 'FAST'
+  const [timingOffset, setTimingOffset] = useState(0);
+
   const handleSaveHistory = (newItem) => {
   setHistoryList(prev => {
     // 최근 기록이 동일한 마디/내용이면 중복 추가 제외
@@ -22,6 +25,44 @@ function App() {
     return [newItem, ...prev];
   });
 };
+
+  // 웹소켓 메시지 수신 시 템포 상태 업데이트
+  useEffect(() => {
+    if (!ws.current) return;
+    ws.current.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.current_measure) {
+        setCurrentMeasure(data.current_measure);
+      }
+      if (data.tempo_status) {
+        setTempoStatus(data.tempo_status);
+        setTimingOffset(data.timing_offset_ms || 0);
+      }
+    };
+  }, [ws.current]);
+
+  // 마디 위치 좌표 계산 (마디 번호에 따라 악보상 위치 추정)
+  const getMeasureStyle = (measure) => {
+    // 예시: 한 줄에 4마디씩 배치된 악보 기준 레이아웃 계산 (필요시 커스텀 좌표 매핑)
+    const row = Math.floor((measure - 1) / 4);
+    const col = (measure - 1) % 4;
+    
+    return {
+      position: 'absolute',
+      top: `${120 + row * 180}px`,
+      left: `${80 + col * 200}px`,
+      width: '190px',
+      height: '160px',
+      border: tempoStatus === 'SLOW' ? '3px solid #FF5252' :
+              tempoStatus === 'FAST' ? '3px solid #FFD700' : '3px solid #4CAF50',
+      backgroundColor: tempoStatus === 'SLOW' ? 'rgba(255, 82, 82, 0.15)' :
+                      tempoStatus === 'FAST' ? 'rgba(255, 215, 0, 0.15)' : 'rgba(76, 175, 80, 0.15)',
+      borderRadius: '6px',
+      transition: 'all 0.15s ease-out',
+      pointerEvents: 'none'
+    };
+  };
+
   
   const [songModeActive, setSongModeActive] = useState(() => {
     return localStorage.getItem('songModeActive') === 'true';
@@ -310,6 +351,11 @@ function App() {
         const data = JSON.parse(event.data);
         if (data.measure) {
           setCurrentMeasure(data.measure);
+        }
+        // 🎯 서버에서 보내는 템포 상태 및 오차 업데이트 반영
+        if (data.tempo_status) {
+          setTempoStatus(data.tempo_status);
+          setTimingOffset(data.timing_offset_ms || 0);
         }
       };
 
@@ -607,6 +653,39 @@ function App() {
                   </div>
                 </div>
 
+                {/* 🎯 실시간 템포 상태 & 오차 피드백 인디케이터 바 */}
+                {isListening && (
+                  <div style={{
+                    position: 'absolute',
+                    top: '15px',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    zIndex: 30,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '8px 18px',
+                    backgroundColor: '#181818',
+                    border: `2px solid ${
+                      tempoStatus === 'SLOW' ? '#FF5252' :
+                      tempoStatus === 'FAST' ? '#FFD700' : '#4CAF50'
+                    }`,
+                    borderRadius: '30px',
+                    boxShadow: '0 4px 20px rgba(0,0,0,0.6)',
+                    color: '#fff',
+                    fontWeight: 'bold',
+                    fontSize: '13px'
+                  }}>
+                    <span>🎯 마디 {currentMeasure}</span>
+                    <span style={{ color: '#555' }}>|</span>
+                    <span>
+                      {tempoStatus === 'SLOW' && <span style={{ color: '#FF5252' }}>⚠️ 박자 느림 (SLOW -{Math.abs(timingOffset)}ms)</span>}
+                      {tempoStatus === 'FAST' && <span style={{ color: '#FFD700' }}>⚡ 박자 빠름 (FAST +{Math.abs(timingOffset)}ms)</span>}
+                      {tempoStatus === 'NORMAL' && <span style={{ color: '#4CAF50' }}>PERFECT TEMPO 🎯</span>}
+                    </span>
+                  </div>
+                )}
+
                 {/* 🎯 [신규] 화면 중앙 상단 실시간 추적 상태 플로팅 배너 */}
                 {isListening && (
                   <div style={{
@@ -660,6 +739,19 @@ function App() {
 
                 {/* 악보 및 캔버스 렌더링 영역 */}
                 <div style={{ flex: 1, width: '100%', height: '100%', overflow: 'hidden', position: 'relative' }}>
+                  {/* 필기용 캔버스 */}
+                      <canvas
+                          ref={(el) => (canvasRefs.current[index] = el)}
+                          style={{
+                              position: 'absolute',
+                              top: 0,
+                              left: 0,
+                              width: '100%',
+                              height: '100%',
+                              mixBlendMode: 'multiply',
+                              pointerEvents: isDrawingMode ? 'auto' : 'none',
+                          }}
+                      />
                     {scoreImages.length > 0 ? (
                         <React.Fragment>
                             {/* 줌 컨트롤 */}
@@ -732,19 +824,6 @@ function App() {
                                                               border: '1px solid #444',
                                                           }
                                                 }
-                                            />
-                                            {/* 필기용 캔버스 */}
-                                            <canvas
-                                                ref={(el) => (canvasRefs.current[index] = el)}
-                                                style={{
-                                                    position: 'absolute',
-                                                    top: 0,
-                                                    left: 0,
-                                                    width: '100%',
-                                                    height: '100%',
-                                                    mixBlendMode: 'multiply',
-                                                    pointerEvents: isDrawingMode ? 'auto' : 'none',
-                                                }}
                                             />
                                         </div>
                                     </div>

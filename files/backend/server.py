@@ -89,6 +89,132 @@ async def audio_sync_websocket(websocket: WebSocket):
 
     [프로토콜]
     1) 연결 직후, 클라이언트는 먼저 텍스트(JSON) 메시지로 어떤 악보를 기준으로 추적할지 알려준다:
+        {"filename": "내악보.musicxml"}
+       (업로드 시 저장된 파일명, UPLOAD_DIR 기준 상대경로)
+    2) 그 이후부터는 기존과 동일하게 오디오 청크(Float32 PCM 바이너리)를 계속 전송한다.
+    3) 서버는 청크마다 JSON으로 상태를 응답한다.
+
+    [동작 모드 — 2가지로 자동 분기됨]
+    - MusicXML 업로드인 경우: 크로마 특징 + Online DTW로 실제 음높이를 비교해서
+      정확한 마디 단위 위치를 추적한다 (아래 '정밀 추적 모드').
+    - PDF/이미지 업로드인 경우: 아직 그 악보의 '정답 음' 정보가 없다(OMR 미연동 상태이므로).
+      이 경우 기존과 동일하게 RMS(음량) 기반 단순 감지로 폴백한다. 즉 "얼마나 정확히
+      추적되는가"는 OMR이 실제로 붙어야 근본적으로 개선된다 — 이건 오디오 분석만으로는
+      해결할 수 없는 부분이라는 점을 명확히 해둔다.
+    """
+    await websocket.accept()
+    print("🎤 클라이언트와 오디오 스트림 웹소켓 연결 성공")
+
+    tracker = None
+    measures_info = None
+    hop_sec = None
+    last_measure = None
+    rolling_buffer = np.zeros(0, dtype=np.float32)
+    total_samples_received = 0
+    frames_processed = 0
+    
+    # [설계 포인트] 매번 버퍼 길이가 달라지는 상태에서 크로마를 통째로 다시 계산하면,
+    # CQT 특성상 "같은 순간"인데도 계산할 때마다 경계(edge) 부분 값이 조금씩 달라져서
+    # 추적이 마디 사이를 왔다갔다 흔들리는 문제가 생긴다.
+    ANALYSIS_WINDOW_SAMPLES = score_tracking.SR  # 크로마 계산에 쓰는 고정 분석 윈도우(1초)
+    MIN_SAMPLES_FOR_CHROMA = ANALYSIS_WINDOW_SAMPLES  # 이 길이가 찰 때까지는 계산 보류
+
+    mode = "rms"  # 기본은 기존 방식(RMS). 초기화 메시지로 MusicXML이 확인되면 "dtw"로 전환
+
+    try:
+        # --- 1) 초기화 메시지 수신: 어떤 악보를 기준으로 추적할지 결정 ---
+        init_raw = await websocket.receive_text()
+        try:
+            init_msg = json.loads(init_raw)
+            filename = init_msg.get("filename", "")
+        except (json.JSONDecodeError, AttributeError):
+            filename = ""
+
+        xml_path = os.path.join(UPLOAD_DIR, filename) if filename else ""
+        if filename and os.path.splitext(filename)[1].lower() in (".musicxml", ".xml") and os.path.exists(xml_path):
+            try:
+                ref = reference_cache.get(xml_path)
+                tracker = score_tracking.OnlineDTW(ref["chroma"], window_sec=1.2, hop_sec=ref["hop_sec"])
+                measures_info = ref["measures_info"]
+                hop_sec = ref["hop_sec"]
+                mode = "dtw"
+                print(f"[audio-sync] '{filename}' 기준 정밀 추적 모드(DTW) 활성화")
+            except Exception as e:
+                print(f"[audio-sync] 기준 특징 생성 실패, RMS 모드로 폴백: {e}")
+                mode = "rms"
+        else:
+            print(f"[audio-sync] MusicXML 기준을 찾지 못해 RMS(단순 음량) 모드로 동작합니다 "
+                  f"(filename='{filename}'). PDF/이미지 악보는 OMR이 연동되기 전까지 정밀 추적이 불가능합니다.")
+
+        # --- 2) 오디오 청크 스트리밍 루프 ---
+        while True:
+            data = await websocket.receive_bytes()
+            audio_array = np.frombuffer(data, dtype=np.float32)
+            if len(audio_array) == 0:
+                continue
+
+            if mode == "dtw":
+                rolling_buffer = np.concatenate([rolling_buffer, audio_array])
+                total_samples_received += len(audio_array)
+                if len(rolling_buffer) > ANALYSIS_WINDOW_SAMPLES:
+                    rolling_buffer = rolling_buffer[-ANALYSIS_WINDOW_SAMPLES:]
+
+                if len(rolling_buffer) < MIN_SAMPLES_FOR_CHROMA:
+                    continue  # 아직 고정 분석 윈도우가 다 안 찼음
+
+                chroma = librosa.feature.chroma_cqt(
+                    y=rolling_buffer, sr=score_tracking.SR, hop_length=score_tracking.HOP
+                )
+                n_total_frames = chroma.shape[1]
+                
+                expected_new_frames = max(1, len(audio_array) // score_tracking.HOP)
+                new_frame_start = max(0, n_total_frames - expected_new_frames)
+                if frames_processed == 0:
+                    new_frame_start = n_total_frames - 1
+
+                measure = last_measure
+                is_trigger = False
+                confidence = 0.0
+                
+                for f in range(new_frame_start, n_total_frames):
+                    live_vec = chroma[:, f]
+                    j_est = tracker.step(live_vec)
+                    ref_t = j_est * hop_sec
+                    measure = score_tracking.ref_time_to_measure(ref_t, measures_info)
+                    
+                    # 🛠️ 수정된 부분: 누락되었던 마이너스 연산자(-) 추가
+                    confidence = max(0.0, 1.0 - tracker.last_cost)
+                    
+                    if measure != last_measure:
+                        is_trigger = True
+                        last_measure = measure
+                    frames_processed += 1
+
+                await websocket.send_text(json.dumps({
+                    "status": "trigger" if is_trigger else "tracking",
+                    "mode": "dtw",
+                    "measure": measure,
+                    "ref_time": round(j_est * hop_sec, 3),
+                    "confidence": round(confidence, 3),
+                }))
+
+            else:  # mode == "rms" (기존 로직 그대로 유지 — 하위호환)
+                rms = np.sqrt(np.mean(audio_array ** 2))
+                if rms > 0.08:
+                    await websocket.send_text(json.dumps({
+                        "status": "trigger",
+                        "mode": "rms",
+                        "message": "Note detected!",
+                        "rms": float(rms),
+                    }))
+
+    except WebSocketDisconnect:
+        print("🔌 오디오 스트림 웹소켓 연결 종료")
+    """
+    실시간 연주 동기화 웹소켓.
+
+    [프로토콜]
+    1) 연결 직후, 클라이언트는 먼저 텍스트(JSON) 메시지로 어떤 악보를 기준으로 추적할지 알려준다:
          {"filename": "내악보.musicxml"}
        (업로드 시 저장된 파일명, UPLOAD_DIR 기준 상대경로)
     2) 그 이후부터는 기존과 동일하게 오디오 청크(Float32 PCM 바이너리)를 계속 전송한다.
