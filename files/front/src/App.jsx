@@ -26,20 +26,7 @@ function App() {
   });
 };
 
-  // 웹소켓 메시지 수신 시 템포 상태 업데이트
-  useEffect(() => {
-    if (!ws.current) return;
-    ws.current.onmessage = (event) => {
-      const data = JSON.parse(event.data);
-      if (data.current_measure) {
-        setCurrentMeasure(data.current_measure);
-      }
-      if (data.tempo_status) {
-        setTempoStatus(data.tempo_status);
-        setTimingOffset(data.timing_offset_ms || 0);
-      }
-    };
-  }, [ws.current]);
+
 
   // 마디 위치 좌표 계산 (마디 번호에 따라 악보상 위치 추정)
   const getMeasureStyle = (measure) => {
@@ -352,7 +339,7 @@ function App() {
         if (data.measure) {
           setCurrentMeasure(data.measure);
         }
-        // 🎯 서버에서 보내는 템포 상태 및 오차 업데이트 반영
+        // 🎯 템포 상태 및 오차 업데이트 반영
         if (data.tempo_status) {
           setTempoStatus(data.tempo_status);
           setTimingOffset(data.timing_offset_ms || 0);
