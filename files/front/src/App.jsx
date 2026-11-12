@@ -727,18 +727,7 @@ function App() {
                 {/* 악보 및 캔버스 렌더링 영역 */}
                 <div style={{ flex: 1, width: '100%', height: '100%', overflow: 'hidden', position: 'relative' }}>
                   {/* 필기용 캔버스 */}
-                      <canvas
-                          ref={(el) => (canvasRefs.current[index] = el)}
-                          style={{
-                              position: 'absolute',
-                              top: 0,
-                              left: 0,
-                              width: '100%',
-                              height: '100%',
-                              mixBlendMode: 'multiply',
-                              pointerEvents: isDrawingMode ? 'auto' : 'none',
-                          }}
-                      />
+                      
                     {scoreImages.length > 0 ? (
                         <React.Fragment>
                             {/* 줌 컨트롤 */}
@@ -812,6 +801,18 @@ function App() {
                                                           }
                                                 }
                                             />
+                                            <canvas
+                                              ref={(el) => (canvasRefs.current[index] = el)}
+                                              style={{
+                                                  position: 'absolute',
+                                                  top: 0,
+                                                  left: 0,
+                                                  width: '100%',
+                                                  height: '100%',
+                                                  mixBlendMode: 'multiply',
+                                                  pointerEvents: isDrawingMode ? 'auto' : 'none',
+                                              }}
+                                          />
                                         </div>
                                     </div>
                                     );
