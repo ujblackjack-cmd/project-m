@@ -725,9 +725,7 @@ function App() {
                 )}
 
                 {/* 악보 및 캔버스 렌더링 영역 */}
-                <div style={{ flex: 1, width: '100%', height: '100%', overflow: 'hidden', position: 'relative' }}>
-                  {/* 필기용 캔버스 */}
-                      
+                <div style={{ flex: 1, width: '100%', height: '100%', overflow: 'hidden', position: 'relative' }}>                      
                     {scoreImages.length > 0 ? (
                         <React.Fragment>
                             {/* 줌 컨트롤 */}
@@ -801,6 +799,7 @@ function App() {
                                                           }
                                                 }
                                             />
+                                            {/* 필기용 캔버스 */}
                                             <canvas
                                               ref={(el) => (canvasRefs.current[index] = el)}
                                               style={{
@@ -813,6 +812,25 @@ function App() {
                                                   pointerEvents: isDrawingMode ? 'auto' : 'none',
                                               }}
                                           />
+                                          {/*  실시간 마디 박스 오버레이 (현재 페이지 범위에 맞게 표시) */}
+                                            {currentMeasure && Math.floor((currentMeasure - 1) / 8) === index && (
+                                              <div style={getMeasureStyle(currentMeasure)}>
+                                                <span style={{
+                                                  position: 'absolute',
+                                                  top: '-22px',
+                                                  left: '0',
+                                                  backgroundColor: tempoStatus === 'SLOW' ? '#FF5252' :
+                                                                   tempoStatus === 'FAST' ? '#FFD700' : '#4CAF50',
+                                                  color: '#121212',
+                                                  fontSize: '10px',
+                                                  fontWeight: 'bold',
+                                                  padding: '2px 6px',
+                                                  borderRadius: '4px'
+                                                }}>
+                                                  ▶ {currentMeasure}마디 ({tempoStatus})
+                                                </span>
+                                              </div>
+                                              )}
                                         </div>
                                     </div>
                                     );
