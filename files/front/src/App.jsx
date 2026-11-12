@@ -520,11 +520,6 @@ function App() {
                   >
                     📝 오답 노트 ({historyList.length})
                   </button>
-                  <ReferencePlayer 
-                    filename={uploadResponse?.filename} 
-                    backendUrl={BACKEND_URL}
-                    currentMeasure={currentMeasure}
-                  />
                 </div>
 
                 {/* 스마트 교보재 플레이어 & AI 레슨 코치 패널 */}
